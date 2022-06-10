@@ -80,9 +80,6 @@ func forwardMetrics(r *http.Request) int {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if _, err := connection.Write([]byte("\n")); err != nil {
-		log.Fatal(err)
-	}
 	log.Printf("Forwarded %d bytes to port %d", written, port)
 	connection.Close()
 	return written
