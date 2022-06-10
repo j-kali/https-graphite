@@ -71,7 +71,8 @@ func forwardMetrics(r *http.Request) int {
 	if err != nil {
 		log.Fatal(err)
 	}
-	message, err := ioutil.ReadAll(r.Body)
+	b64decoder := base64.NewDecoder(base64.StdEncoding, r.Body)
+	message, err := ioutil.ReadAll(b64decoder)
 	if err != nil {
 		log.Fatal(err)
 	}
