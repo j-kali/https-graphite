@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -80,7 +81,7 @@ func forwardMetrics(r *http.Request) int {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Forwarded %d bytes to port %d", written, port)
+	log.Printf("Forwarded %d bytes to port %d from %s using key sha1:%x (%d more certificates in the chain)", written, port, r.RemoteAddr, sha1.Sum(r.TLS.PeerCertificates[0].Raw), len(r.TLS.PeerCertificates) - 1)
 	connection.Close()
 	return written
 }
