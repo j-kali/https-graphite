@@ -68,18 +68,27 @@ func forwardMetrics(r *http.Request) int {
 	if r.URL.Path == "/pickle" {
 		port = 2004
 	}
+	var err error
 	connection, err := net.Dial("tcp", fmt.Sprintf("%s:%d", target, port))
 	if err != nil {
 		log.Fatal(err)
 	}
-	b64decoder := base64.NewDecoder(base64.StdEncoding, r.Body)
-	message, err := ioutil.ReadAll(b64decoder)
+	var message []byte
+	if r.URL.Path != "/text" {
+		b64decoder := base64.NewDecoder(base64.StdEncoding, r.Body)
+		message, err = ioutil.ReadAll(b64decoder)
+	} else {
+		message, err = ioutil.ReadAll(r.Body)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
 	written, err := connection.Write(message)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if r.URL.Path == "/text" {
+		_, _ = connection.Write([]byte("\n"))
 	}
 	log.Printf("Forwarded %d bytes to port %d from %s using key sha1:%x (%d more certificates in the chain)", written, port, r.RemoteAddr, sha1.Sum(r.TLS.PeerCertificates[0].Raw), len(r.TLS.PeerCertificates) - 1)
 	connection.Close()
