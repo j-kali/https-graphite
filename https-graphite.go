@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -87,7 +88,7 @@ func forwardMetrics(r *http.Request) int {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if r.URL.Path == "/text" {
+	if r.URL.Path == "/text" && ! strings.HasSuffix(string(message), "\n") {
 		_, _ = connection.Write([]byte("\n"))
 	}
 	log.Printf("Forwarded %d bytes to port %d from %s using key sha1:%x (%d more certificates in the chain)", written, port, r.RemoteAddr, sha1.Sum(r.TLS.PeerCertificates[0].Raw), len(r.TLS.PeerCertificates) - 1)
