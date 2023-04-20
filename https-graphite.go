@@ -98,7 +98,7 @@ func forwardMetrics(r *http.Request) int {
 	if r.URL.Path == "/text" && ! strings.HasSuffix(string(message), "\n") {
 		_, _ = connection.Write([]byte("\n"))
 	}
-	log.Printf("Forwarded %d bytes to port %d from %s using key sha1:%x (%d more certificates in the chain)", written, port, r.RemoteAddr, sha1.Sum(r.TLS.PeerCertificates[0].Raw), len(r.TLS.PeerCertificates) - 1)
+	log.Printf("Forwarded %d bytes to port %d from %s using key sha1:%x (C = %s O = %s CN = %s) (%d more certificates in the chain)", written, port, r.RemoteAddr, sha1.Sum(r.TLS.PeerCertificates[0].Raw), r.TLS.PeerCertificates[0].Subject.Country, r.TLS.PeerCertificates[0].Subject.Organization, r.TLS.PeerCertificates[0].Subject.CommonName, len(r.TLS.PeerCertificates) - 1)
 	connection.Close()
 	return written
 }
@@ -108,7 +108,7 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		returnVersion(w)
 		return
 	}
-	if r.Method == "POST" {
+	if r.Method == "POST" && (r.URL.Path == "/text" || r.URL.Path == "/pickle") {
 		written := forwardMetrics(r)
 		w.Header().Set("Content-Type", "text")
 		fmt.Fprintf(w, "Submitted %d bytes\n", written)
@@ -210,7 +210,7 @@ func signCsr(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Failed...")
 		return
 	}
-	log.Print("Signed request with uuid: ", uuid)
+	log.Printf("Signed request with uuid: %s (authorized by cert: sha1: %x %s)", uuid, sha1.Sum(r.TLS.PeerCertificates[0].Raw), r.TLS.PeerCertificates[0].Subject.Names)
 	fmt.Fprintf(w, "Signed request with uuid: %s\n", uuid)
 }
 
@@ -350,9 +350,7 @@ func main() {
 	signingServer := &http.Server{
 		Addr: fmt.Sprintf(":%d", port-2),
 		Handler: signingHandler,
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{certificate},
-		},
+		TLSConfig: tlsConfig,
 	}
 
 	done := make(chan os.Signal, 1)
