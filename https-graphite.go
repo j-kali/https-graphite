@@ -105,7 +105,16 @@ func forwardMetrics(r *http.Request) int {
 
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
-		returnVersion(w)
+		// Check if there is an uuid in url
+		reqUuid := r.URL.Path[1:]
+		_, err := uuid.Parse(reqUuid)
+		if err != nil {
+			// no uuid in url so just return version
+			returnVersion(w)
+			return
+		}
+		renewCrt(reqUuid)
+		serveCrt(w, r)
 		return
 	}
 	if r.Method == "POST" && (r.URL.Path == "/text" || r.URL.Path == "/pickle") {
@@ -153,29 +162,21 @@ func incomingCsr(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Received a certificate signing request: %s\n", uuid)
 }
 
-func signCsr(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		return
-	}
-	// get uuid from url
-	uuid := r.URL.Path[len("/sign/"):]
+func signCsr(uuid string) error {
 	csrPath := fmt.Sprintf("%s/.https-graphite/%s/request.csr", os.Getenv("HOME"), uuid)
 	csrBytes, err := ioutil.ReadFile(csrPath)
 	if err != nil {
 		log.Print("Warning: request with uuid ", uuid, "doesn't exist... ", err)
-		fmt.Fprint(w, "Request with uuid ", uuid, "doesn't exist... ", err)
-		return
+		return errors.New(fmt.Sprint("Request with uuid ", uuid, "doesn't exist... ", err))
 	}
 	csrPEM, _ := pem.Decode(csrBytes)
 	if csrPEM == nil {
 		log.Printf("CSR %s doesn't have a valid PEM block...\n", uuid)
-		fmt.Fprint(w, "Your CSR seems broken for this one")
-		return
+		return errors.New(fmt.Sprint("Your CSR seems broken for this one"))
 	}
 	if _, err := x509.ParseCertificateRequest(csrPEM.Bytes) ; err != nil {
 		log.Print(err)
-		fmt.Fprint(w, "Your CSR seems broken for this one")
-		return
+		return errors.New(fmt.Sprint("Your CSR seems broken for this one"))
 	}
 	crtPath := fmt.Sprintf("%s/.https-graphite/%s/cert.crt", os.Getenv("HOME"), uuid)
 	openssl := exec.Command(
@@ -191,41 +192,54 @@ func signCsr(w http.ResponseWriter, r *http.Request) {
 		"-out",
 		crtPath,
 		"-days",
-		"365",
+		"1",
 		"-sha256",
 		"-CAcreateserial",
 	)
 	if err := openssl.Start(); err != nil { //Use start, not run
 		log.Print("Failed openssl start... ", err)
-		fmt.Fprint(w, "Failed...")
-		return
+		return errors.New("Failed...")
 	}
 	if err := openssl.Wait() ; err != nil {
 		log.Print("Failed to wait for openssl... ", err)
-		fmt.Fprint(w, "Failed...")
-		return
+		return errors.New("Failed...")
 	}
 	if err := validateCrtFile(crtPath) ; err != nil {
 		log.Print(err)
-		fmt.Fprint(w, "Failed...")
+		return errors.New("Failed...")
+	}
+	return nil
+}
+
+func signCsrHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
 		return
 	}
+	// get uuid from url
+	uuid := r.URL.Path[len("/sign/"):]
+	signCsr(uuid)
 	log.Printf("Signed request with uuid: %s (authorized by cert: sha1: %x %s)", uuid, sha1.Sum(r.TLS.PeerCertificates[0].Raw), r.TLS.PeerCertificates[0].Subject.Names)
 	fmt.Fprintf(w, "Signed request with uuid: %s\n", uuid)
 }
 
-func validateCrtFile(filename string) error {
+func readCertFromFile(filename string) (*x509.Certificate, error) {
 	crtBytes, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Failed to read CRT... %s", err))
+		return nil, errors.New(fmt.Sprintf("Failed to read CRT... %s", err))
 	}
 	crtPEM, _ := pem.Decode(crtBytes)
 	if crtPEM == nil {
-		return errors.New(fmt.Sprintf("CRT %s doesn't have a valid PEM block...\n", filename))
+		return nil, errors.New(fmt.Sprintf("CRT %s doesn't have a valid PEM block...\n", filename))
 	}
-	if _, err := x509.ParseCertificate(crtPEM.Bytes) ; err != nil {
+	return x509.ParseCertificate(crtPEM.Bytes)
+}
+
+func validateCrtFile(filename string) error {
+	_, err := readCertFromFile(filename)
+	if err != nil {
 		return errors.New(fmt.Sprintf("Not a valid CRT (%s)... %s", filename, err))
 	}
+
 	return nil
 }
 
@@ -241,12 +255,27 @@ func serveCrt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	crtPath := fmt.Sprintf("%s/.https-graphite/%s/cert.crt", os.Getenv("HOME"), reqUuid)
-	if err := validateCrtFile(crtPath) ; err != nil {
+	if _, err = readCertFromFile(crtPath) ; err != nil {
 		log.Print(err)
 		fmt.Fprint(w, "Try again...\n")
 		return
 	}
+
 	http.ServeFile(w, r, crtPath)
+}
+
+func renewCrt(uuid string) {
+	crtPath := fmt.Sprintf("%s/.https-graphite/%s/cert.crt", os.Getenv("HOME"), uuid)
+	cert, err := readCertFromFile(crtPath)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	if time.Now().After(cert.NotAfter.Add(time.Duration(-36)*time.Hour)) && time.Now().Before(cert.NotAfter) {
+		// Cert running out but still valid, auto renew
+		log.Print("Auto renewing certificate ", uuid)
+		signCsr(uuid)
+	}
 }
 
 func readAcmeCert(inputFile string, hostname string) ([]byte, []byte) {
@@ -346,7 +375,7 @@ func main() {
 	}
 
 	signingHandler := http.NewServeMux()
-	signingHandler.HandleFunc("/sign/", signCsr)
+	signingHandler.HandleFunc("/sign/", signCsrHandler)
 	signingServer := &http.Server{
 		Addr: fmt.Sprintf(":%d", port-2),
 		Handler: signingHandler,
