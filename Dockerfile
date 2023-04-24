@@ -7,4 +7,5 @@ RUN make
 
 FROM alpine
 COPY --from=build /go/src/project/https-graphite /bin/https-graphite
+RUN apk add openssl
 ENTRYPOINT ["/bin/https-graphite"]
