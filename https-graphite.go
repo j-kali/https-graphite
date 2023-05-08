@@ -192,7 +192,7 @@ func signCsr(uuid string) error {
 		"-out",
 		crtPath,
 		"-days",
-		"1",
+		"28",
 		"-sha256",
 		"-CAcreateserial",
 	)
@@ -271,7 +271,7 @@ func renewCrt(uuid string) {
 		log.Print(err)
 		return
 	}
-	if time.Now().After(cert.NotAfter.Add(time.Duration(-36)*time.Hour)) && time.Now().Before(cert.NotAfter) {
+	if time.Now().After(cert.NotAfter.Add(time.Duration(-7*24)*time.Hour)) && time.Now().Before(cert.NotAfter) {
 		// Cert running out but still valid, auto renew
 		log.Print("Auto renewing certificate ", uuid)
 		signCsr(uuid)
